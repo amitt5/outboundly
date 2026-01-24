@@ -29,7 +29,7 @@ import {
   Play,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { createDemoAgentId, upsertDemoAgent } from "@/lib/demo-agent-store";
+import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
 
 const steps = [
   { id: 1, title: "Basic Info", icon: User },
@@ -60,10 +60,11 @@ export default function CreateAgentPage() {
   const router = useRouter();
   const [currentStep, setCurrentStep] = useState(1);
   const [isCreating, setIsCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
 
   const [formData, setFormData] = useState({
-    businessName: "HarborHub Coworking",
-    website: "https://harborhub.example",
+    businessName: "",
+    website: "",
     documentsNotes: "",
     previousSalesTranscripts: "",
     currentRepTrainingTranscripts: "",
@@ -107,32 +108,80 @@ export default function CreateAgentPage() {
 
   const handleCreate = async () => {
     setIsCreating(true);
-    await new Promise((resolve) => setTimeout(resolve, 600));
+    setCreateError(null);
+    try {
+      const supabase = getSupabaseBrowserClient();
 
-    upsertDemoAgent({
-      id: createDemoAgentId(),
-      createdAt: new Date().toISOString(),
-      published: false,
-      business: {
-        businessName: formData.businessName.trim() || "HarborHub Coworking",
-        website: formData.website.trim(),
-        documentsNotes: formData.documentsNotes,
-        previousSalesTranscripts: formData.previousSalesTranscripts,
-        currentRepTrainingTranscripts: formData.currentRepTrainingTranscripts,
-      },
-      name: formData.name.trim() || "Coworking Sales Agent",
-      description:
-        formData.description.trim() ||
-        "Qualifies coworking leads, answers questions, and books tours.",
-      voicePreset: formData.voice,
-      personalityTraits: formData.personality,
-      greeting: formData.greeting,
-      talkingPoints: formData.talkingPoints,
-      objective: formData.objective,
-    });
+      const agentPayload = {
+        business_name: formData.businessName.trim(),
+        business_website: formData.website.trim() || null,
+        agent_name: (formData.name.trim() || "Sales Agent").trim(),
+        description: formData.description.trim() || null,
+        opening_greeting: formData.greeting.trim() || null,
+        key_talking_points: formData.talkingPoints.trim() || null,
+        primary_objective: formData.objective.trim() || null,
+        success_criteria: formData.successCriteria,
+        voice_preset: formData.voice,
+        speaking_pace: formData.speakingPace?.[0] ?? null,
+        personality_traits: formData.personality,
+        max_call_duration_minutes: formData.maxCallDuration?.[0] ?? 10,
+        published: false,
+      };
 
-    setIsCreating(false);
-    router.push("/agents");
+      const { data: created, error } = await supabase
+        .from("agents")
+        .insert(agentPayload)
+        .select("id")
+        .single();
+
+      if (error || !created?.id) throw error || new Error("Failed to create agent.");
+
+      const uploads: Array<{
+        agent_id: string;
+        kind: "document" | "previous_sales_transcript" | "training_transcript";
+        title: string;
+        text_content: string;
+      }> = [];
+
+      if (formData.documentsNotes.trim()) {
+        uploads.push({
+          agent_id: created.id,
+          kind: "document",
+          title: "Documents / information (notes)",
+          text_content: formData.documentsNotes,
+        });
+      }
+      if (formData.previousSalesTranscripts.trim()) {
+        uploads.push({
+          agent_id: created.id,
+          kind: "previous_sales_transcript",
+          title: "Previous sales transcripts",
+          text_content: formData.previousSalesTranscripts,
+        });
+      }
+      if (formData.currentRepTrainingTranscripts.trim()) {
+        uploads.push({
+          agent_id: created.id,
+          kind: "training_transcript",
+          title: "Training transcripts (current rep)",
+          text_content: formData.currentRepTrainingTranscripts,
+        });
+      }
+
+      if (uploads.length) {
+        const { error: uploadsError } = await supabase
+          .from("agent_uploads")
+          .insert(uploads);
+        if (uploadsError) throw uploadsError;
+      }
+
+      router.push("/agents");
+    } catch (e: any) {
+      console.error(e);
+      setCreateError(e?.message || "Failed to create agent.");
+    } finally {
+      setIsCreating(false);
+    }
   };
 
   return (
@@ -209,6 +258,11 @@ export default function CreateAgentPage() {
         {/* Form Content */}
         <Card className="max-w-3xl">
           <CardContent className="p-6">
+            {createError && (
+              <div className="mb-6 rounded-lg border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive">
+                {createError}
+              </div>
+            )}
             {/* Step 1: Basic Info */}
             {currentStep === 1 && (
               <div className="space-y-6">

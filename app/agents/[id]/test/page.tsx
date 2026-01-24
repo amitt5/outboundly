@@ -21,9 +21,7 @@ import {
   RefreshCw,
   MessageSquare,
 } from "lucide-react";
-import { agents } from "@/lib/mock-data";
-import type { Agent } from "@/lib/mock-data";
-import { getDemoAgentById, type DemoAgentRecord } from "@/lib/demo-agent-store";
+import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
 
 const sampleConversation = [
   { speaker: "agent", text: "Hi, this is Alex from TechStartup Inc. I hope I caught you at a good time." },
@@ -38,8 +36,30 @@ export default function AgentTestPage({
 }) {
   const { id } = use(params);
   const router = useRouter();
-  const [agent, setAgent] = useState<Agent | null>(null);
-  const [demoAgent, setDemoAgent] = useState<DemoAgentRecord | null>(null);
+  const [agent, setAgent] = useState<{
+    id: string;
+    business_name: string;
+    business_website: string | null;
+    agent_name: string;
+    description: string | null;
+    opening_greeting: string | null;
+    key_talking_points: string | null;
+    primary_objective: string | null;
+    success_criteria: string;
+    voice_preset: string | null;
+    speaking_pace: number | null;
+    personality_traits: string[];
+    max_call_duration_minutes: number;
+    published: boolean;
+  } | null>(null);
+  const [uploads, setUploads] = useState<
+    Array<{
+      id: string;
+      kind: "document" | "previous_sales_transcript" | "training_transcript";
+      title: string | null;
+      text_content: string | null;
+    }>
+  >([]);
   const [isCallActive, setIsCallActive] = useState(false);
   const [isCallConnecting, setIsCallConnecting] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
@@ -58,17 +78,34 @@ export default function AgentTestPage({
   });
 
   useEffect(() => {
-    const foundDemo = getDemoAgentById(id);
-    if (foundDemo) {
-      setDemoAgent(foundDemo);
-      setAgent(null);
-      setConversation([]);
-      return;
-    }
+    const load = async () => {
+      try {
+        const supabase = getSupabaseBrowserClient();
+        const { data, error } = await supabase
+          .from("agents")
+          .select(
+            "id,business_name,business_website,agent_name,description,opening_greeting,key_talking_points,primary_objective,success_criteria,voice_preset,speaking_pace,personality_traits,max_call_duration_minutes,published"
+          )
+          .eq("id", id)
+          .single();
+        if (error) throw error;
+        setAgent(data);
 
-    const foundAgent = agents.find((a) => a.id === id) || null;
-    setAgent(foundAgent);
-    setDemoAgent(null);
+        const { data: up, error: upErr } = await supabase
+          .from("agent_uploads")
+          .select("id,kind,title,text_content")
+          .eq("agent_id", id)
+          .order("created_at", { ascending: true });
+        if (upErr) throw upErr;
+        setUploads((up || []) as any);
+
+        setConversation([]);
+      } catch (e: any) {
+        console.error(e);
+        setAgent(null);
+      }
+    };
+    void load();
   }, [id]);
 
   useEffect(() => {
@@ -156,7 +193,6 @@ export default function AgentTestPage({
       },
     ]);
 
-    const isDemo = !!demoAgent;
     const assistantId = process.env.NEXT_PUBLIC_VAPI_ASSISTANT_ID;
 
     const truncate = (value: string, max = 1600) =>
@@ -164,18 +200,18 @@ export default function AgentTestPage({
 
     const renderGreeting = (template: string) =>
       template
-        .replaceAll("{agent_name}", (demoAgent?.name || agent?.name || "Alex").trim())
-        .replaceAll("{business_name}", demoAgent?.business.businessName || "HarborHub Coworking")
-        .replaceAll("{company_name}", demoAgent?.business.businessName || "HarborHub Coworking")
+        .replaceAll("{agent_name}", (agent?.agent_name || "Alex").trim())
+        .replaceAll("{business_name}", agent?.business_name || "Business")
+        .replaceAll("{company_name}", agent?.business_name || "Business")
         .replaceAll("{prospect_name}", prospectFirstName);
 
-    if (isDemo && demoAgent) {
+    if (agent) {
       const systemPrompt = [
         "You are a friendly, consultative sales agent for a coworking space.",
         "Your goal: qualify the prospect, answer their questions, and book a tour/demo.",
         "",
-        `Business: ${demoAgent.business.businessName}`,
-        demoAgent.business.website ? `Website: ${demoAgent.business.website}` : "",
+        `Business: ${agent.business_name}`,
+        agent.business_website ? `Website: ${agent.business_website}` : "",
         "",
         "Prospect details (from form submission):",
         `- Name: ${prospectName}`,
@@ -184,20 +220,25 @@ export default function AgentTestPage({
         prospect.interestedIn ? `- Interested in: ${prospect.interestedIn}` : "",
         prospect.questions ? `- Specific questions: ${prospect.questions}` : "",
         "",
-        demoAgent.objective ? `Objective: ${demoAgent.objective}` : "",
-        demoAgent.personalityTraits.length
-          ? `Personality: ${demoAgent.personalityTraits.join(", ")}`
+        agent.primary_objective ? `Objective: ${agent.primary_objective}` : "",
+        agent.personality_traits?.length
+          ? `Personality: ${agent.personality_traits.join(", ")}`
           : "",
-        demoAgent.talkingPoints ? `Talking points:\n${truncate(demoAgent.talkingPoints, 1800)}` : "",
-        demoAgent.business.documentsNotes
-          ? `Business info / docs:\n${truncate(demoAgent.business.documentsNotes, 1800)}`
+        agent.key_talking_points
+          ? `Talking points:\n${truncate(agent.key_talking_points, 1800)}`
           : "",
-        demoAgent.business.previousSalesTranscripts
-          ? `Best rep transcript excerpts:\n${truncate(demoAgent.business.previousSalesTranscripts, 1800)}`
-          : "",
-        demoAgent.business.currentRepTrainingTranscripts
-          ? `Training transcript excerpts:\n${truncate(demoAgent.business.currentRepTrainingTranscripts, 1800)}`
-          : "",
+        ...uploads
+          .filter((u) => u.text_content && u.text_content.trim())
+          .slice(0, 6)
+          .map((u) => {
+            const label =
+              u.kind === "document"
+                ? "Document"
+                : u.kind === "previous_sales_transcript"
+                  ? "Previous sales transcript"
+                  : "Training transcript";
+            return `${label}${u.title ? ` (${u.title})` : ""}:\n${truncate(u.text_content || "", 1800)}`;
+          }),
         "",
         "Guidelines:",
         "- Start with a warm greeting and confirm what they need.",
@@ -211,16 +252,16 @@ export default function AgentTestPage({
         .join("\n");
 
       const transientAssistant = {
-        name: demoAgent.name,
+        name: agent.agent_name,
         firstMessageMode: "assistant-speaks-first",
-        firstMessage: renderGreeting(demoAgent.greeting || ""),
+        firstMessage: renderGreeting(agent.opening_greeting || ""),
         model: {
           provider: "openai",
           model: "gpt-4o",
           messages: [{ role: "system", content: systemPrompt }],
         },
         voice: { provider: "vapi", voiceId: "Elliot" },
-        maxDurationSeconds: 600,
+        maxDurationSeconds: Math.max(60, (agent.max_call_duration_minutes || 10) * 60),
         clientMessages: ["transcript", "tool-calls"],
       };
 
@@ -274,7 +315,7 @@ export default function AgentTestPage({
     });
   };
 
-  if (!agent && !demoAgent) {
+  if (!agent) {
     return (
       <DashboardLayout>
         <div className="flex h-full items-center justify-center">
@@ -284,12 +325,8 @@ export default function AgentTestPage({
     );
   }
 
-  const displayName = demoAgent?.name || agent?.name || "Agent";
-  const displayStatus = demoAgent
-    ? demoAgent.published
-      ? "active"
-      : "inactive"
-    : agent?.status;
+  const displayName = agent.agent_name;
+  const displayStatus = agent.published ? "active" : "inactive";
   const statusClass =
     displayStatus === "active"
       ? "bg-success/10 text-success border-success/20"
@@ -388,7 +425,7 @@ export default function AgentTestPage({
                 <div className="flex-1 overflow-auto p-6">
                   {!isCallActive ? (
                     <div className="space-y-6">
-                      {demoAgent && !demoAgent.published && (
+                      {!agent.published && (
                         <div className="rounded-lg border border-border bg-muted/30 p-4">
                           <p className="text-sm text-muted-foreground">
                             This agent isn’t published yet. Go back to `Agents` and click
@@ -473,7 +510,7 @@ export default function AgentTestPage({
                       <Button
                         onClick={handleStartCall}
                         className="w-full"
-                        disabled={!!demoAgent && !demoAgent.published}
+                        disabled={!agent.published}
                       >
                         <Phone className="mr-2 h-4 w-4" />
                         Start Simulation Call
@@ -537,29 +574,31 @@ export default function AgentTestPage({
                 <CardTitle className="text-base">Business Context</CardTitle>
               </CardHeader>
               <CardContent>
-                {demoAgent ? (
-                  <div className="space-y-3">
+                <div className="space-y-3">
+                  <div>
+                    <p className="text-sm text-muted-foreground">Business</p>
+                    <p className="font-medium text-foreground">
+                      {agent.business_name}
+                    </p>
+                  </div>
+                  {agent.business_website && (
                     <div>
-                      <p className="text-sm text-muted-foreground">Business</p>
+                      <p className="text-sm text-muted-foreground">Website</p>
                       <p className="font-medium text-foreground">
-                        {demoAgent.business.businessName}
+                        {agent.business_website}
                       </p>
                     </div>
-                    {demoAgent.business.website && (
-                      <div>
-                        <p className="text-sm text-muted-foreground">Website</p>
-                        <p className="font-medium text-foreground">
-                          {demoAgent.business.website}
-                        </p>
-                      </div>
-                    )}
+                  )}
+                  {agent.primary_objective && (
                     <div>
                       <p className="text-sm text-muted-foreground">Objective</p>
-                      <p className="font-medium text-foreground">{demoAgent.objective}</p>
+                      <p className="font-medium text-foreground">
+                        {agent.primary_objective}
+                      </p>
                     </div>
-                  </div>
-                ) : (
-                  <Tabs defaultValue="info">
+                  )}
+                </div>
+                <Tabs defaultValue="info">
                     <TabsList className="grid w-full grid-cols-2">
                       <TabsTrigger value="info">Info</TabsTrigger>
                       <TabsTrigger value="config">Config</TabsTrigger>
@@ -567,43 +606,40 @@ export default function AgentTestPage({
                     <TabsContent value="info" className="mt-4 space-y-3">
                       <div>
                         <p className="text-sm text-muted-foreground">Voice</p>
-                        <p className="font-medium text-foreground">{agent?.voice}</p>
+                        <p className="font-medium text-foreground">{agent.voice_preset || "default"}</p>
                       </div>
                       <div>
                         <p className="text-sm text-muted-foreground">Personality</p>
                         <p className="font-medium text-foreground">
-                          {agent?.personality}
+                          {agent.personality_traits?.length ? agent.personality_traits.join(", ") : "—"}
                         </p>
                       </div>
                       <div>
                         <p className="text-sm text-muted-foreground">Objective</p>
                         <p className="font-medium text-foreground">
-                          {agent?.objective}
+                          {agent.primary_objective || "—"}
                         </p>
                       </div>
                     </TabsContent>
                     <TabsContent value="config" className="mt-4 space-y-3">
                       <div>
-                        <p className="text-sm text-muted-foreground">Total Calls</p>
+                        <p className="text-sm text-muted-foreground">Success criteria</p>
+                        <p className="font-medium text-foreground">{agent.success_criteria}</p>
+                      </div>
+                      <div>
+                        <p className="text-sm text-muted-foreground">Max duration</p>
                         <p className="font-medium text-foreground">
-                          {agent?.totalCalls}
+                          {agent.max_call_duration_minutes} minutes
                         </p>
                       </div>
                       <div>
-                        <p className="text-sm text-muted-foreground">Success Rate</p>
+                        <p className="text-sm text-muted-foreground">Speaking pace</p>
                         <p className="font-medium text-foreground">
-                          {agent?.successRate}%
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-sm text-muted-foreground">Avg Duration</p>
-                        <p className="font-medium text-foreground">
-                          {agent ? `${Math.floor(agent.avgCallDuration / 60)}:${(agent.avgCallDuration % 60).toString().padStart(2, "0")}` : "--:--"}
+                          {agent.speaking_pace ?? "—"}
                         </p>
                       </div>
                     </TabsContent>
                   </Tabs>
-                )}
               </CardContent>
             </Card>
 

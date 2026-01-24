@@ -26,13 +26,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { agents } from "@/lib/mock-data";
-import {
-  deleteDemoAgent,
-  getDemoAgents,
-  setDemoAgentPublished,
-  type DemoAgentRecord,
-} from "@/lib/demo-agent-store";
+import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
 
 const statusColors: Record<string, string> = {
   active: "bg-success/10 text-success border-success/20",
@@ -48,36 +42,67 @@ function formatDuration(seconds: number): string {
 
 export default function AgentsPage() {
   const [searchQuery, setSearchQuery] = useState("");
-  const [demoAgents, setDemoAgents] = useState<DemoAgentRecord[]>([]);
+  const [agents, setAgents] = useState<
+    Array<{
+      id: string;
+      agent_name: string;
+      description: string | null;
+      published: boolean;
+      created_at: string;
+    }>
+  >([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
-    setDemoAgents(getDemoAgents());
+    const load = async () => {
+      setLoadError(null);
+      try {
+        const supabase = getSupabaseBrowserClient();
+        const { data, error } = await supabase
+          .from("agents")
+          .select("id, agent_name, description, published, created_at")
+          .order("created_at", { ascending: false });
+        if (error) throw error;
+        setAgents(data || []);
+      } catch (e: any) {
+        console.error(e);
+        setLoadError(e?.message || "Failed to load agents.");
+      }
+    };
+    void load();
   }, []);
 
-  const allAgents = useMemo(() => {
-    const demoAsAgents = demoAgents.map((a) => ({
-      id: a.id,
-      name: a.name,
-      description: a.description,
-      status: a.published ? ("active" as const) : ("inactive" as const),
-      totalCalls: 0,
-      successRate: 0,
-      avgCallDuration: 0,
-      __demo: true as const,
-      __published: a.published,
-    }));
-    return [...demoAsAgents, ...agents.map((a) => ({ ...a, __demo: false as const, __published: a.status === "active" }))];
-  }, [demoAgents]);
-
-  const filteredAgents = allAgents.filter((agent) => {
+  const filteredAgents = useMemo(() => {
     const q = searchQuery.toLowerCase();
-    return (
-      agent.name.toLowerCase().includes(q) ||
-      agent.description.toLowerCase().includes(q)
-    );
-  });
+    return agents
+      .map((a) => ({
+        id: a.id,
+        name: a.agent_name,
+        description: a.description || "",
+        status: a.published ? ("active" as const) : ("inactive" as const),
+        totalCalls: 0,
+        successRate: 0,
+        avgCallDuration: 0,
+        __published: a.published,
+      }))
+      .filter(
+        (a) => a.name.toLowerCase().includes(q) || a.description.toLowerCase().includes(q)
+      );
+  }, [agents, searchQuery]);
 
-  const refreshDemoAgents = () => setDemoAgents(getDemoAgents());
+  const updatePublished = async (id: string, published: boolean) => {
+    const supabase = getSupabaseBrowserClient();
+    const { error } = await supabase.from("agents").update({ published }).eq("id", id);
+    if (error) throw error;
+    setAgents((prev) => prev.map((a) => (a.id === id ? { ...a, published } : a)));
+  };
+
+  const deleteAgent = async (id: string) => {
+    const supabase = getSupabaseBrowserClient();
+    const { error } = await supabase.from("agents").delete().eq("id", id);
+    if (error) throw error;
+    setAgents((prev) => prev.filter((a) => a.id !== id));
+  };
 
   return (
     <DashboardLayout>
@@ -111,6 +136,11 @@ export default function AgentsPage() {
 
         {/* Agents Grid */}
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {loadError && (
+            <div className="sm:col-span-2 lg:col-span-3 rounded-lg border border-destructive/20 bg-destructive/10 p-4 text-sm text-destructive">
+              {loadError}
+            </div>
+          )}
           {filteredAgents.map((agent) => (
             <Card key={agent.id} className="overflow-hidden">
               <CardContent className="p-0">
@@ -134,11 +164,12 @@ export default function AgentsPage() {
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
                           <DropdownMenuItem
-                            onClick={() => {
-                              if (!agent.__demo) return;
-                              const nextPublished = !(agent as any).__published;
-                              setDemoAgentPublished(agent.id, nextPublished);
-                              refreshDemoAgents();
+                            onClick={async () => {
+                              try {
+                                await updatePublished(agent.id, agent.status !== "active");
+                              } catch (e) {
+                                console.error(e);
+                              }
                             }}
                           >
                             {agent.status === "active" ? (
@@ -153,17 +184,18 @@ export default function AgentsPage() {
                               </>
                             )}
                           </DropdownMenuItem>
-                          <DropdownMenuItem disabled={!agent.__demo}>
+                          <DropdownMenuItem disabled>
                             <Copy className="mr-2 h-4 w-4" />
                             Duplicate
                           </DropdownMenuItem>
                           <DropdownMenuItem
                             className="text-destructive"
-                            disabled={!agent.__demo}
-                            onClick={() => {
-                              if (!agent.__demo) return;
-                              deleteDemoAgent(agent.id);
-                              refreshDemoAgents();
+                            onClick={async () => {
+                              try {
+                                await deleteAgent(agent.id);
+                              } catch (e) {
+                                console.error(e);
+                              }
                             }}
                           >
                             <Trash2 className="mr-2 h-4 w-4" />
@@ -218,7 +250,7 @@ export default function AgentsPage() {
                     <Button
                       variant="outline"
                       className="w-full bg-transparent"
-                      disabled={agent.__demo && agent.status !== "active"}
+                      disabled={agent.status !== "active"}
                     >
                       Test Agent
                     </Button>
