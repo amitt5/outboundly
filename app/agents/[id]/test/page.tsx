@@ -14,20 +14,10 @@ import {
   Phone,
   PhoneOff,
   Mic,
-  MicOff,
-  Volume2,
-  VolumeX,
   Settings,
   RefreshCw,
-  MessageSquare,
 } from "lucide-react";
 import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
-
-const sampleConversation = [
-  { speaker: "agent", text: "Hi, this is Alex from TechStartup Inc. I hope I caught you at a good time." },
-  { speaker: "user", text: "Yes, this is Sarah. What can I do for you?" },
-  { speaker: "agent", text: "Great to connect with you, Sarah. I'm reaching out because we've been helping companies like yours streamline their sales operations with AI-powered solutions." },
-];
 
 export default function AgentTestPage({
   params,
@@ -62,10 +52,6 @@ export default function AgentTestPage({
   >([]);
   const [isCallActive, setIsCallActive] = useState(false);
   const [isCallConnecting, setIsCallConnecting] = useState(false);
-  const [isMuted, setIsMuted] = useState(false);
-  const [isSpeakerOn, setIsSpeakerOn] = useState(true);
-  const [userMessage, setUserMessage] = useState("");
-  const [conversation, setConversation] = useState(sampleConversation);
   const [callError, setCallError] = useState<string | null>(null);
   const vapiRef = useRef<Vapi | null>(null);
 
@@ -98,8 +84,6 @@ export default function AgentTestPage({
           .order("created_at", { ascending: true });
         if (upErr) throw upErr;
         setUploads((up || []) as any);
-
-        setConversation([]);
       } catch (e: any) {
         console.error(e);
         setAgent(null);
@@ -124,7 +108,6 @@ export default function AgentTestPage({
     const onCallEnd = () => {
       setIsCallConnecting(false);
       setIsCallActive(false);
-      setIsMuted(false);
     };
 
     const onError = (error: any) => {
@@ -137,31 +120,20 @@ export default function AgentTestPage({
       setCallError(String(message));
       setIsCallConnecting(false);
       setIsCallActive(false);
-      setIsMuted(false);
 
       void vapi.stop().catch((stopError) => {
         console.error("Failed to stop Vapi call after error:", stopError);
       });
     };
 
-    const onMessage = (message: any) => {
-      if (message?.type !== "transcript") return;
-      if (typeof message?.transcript !== "string" || !message.transcript.trim()) return;
-
-      const speaker = message.role === "assistant" ? "agent" : "user";
-      setConversation((prev) => [...prev, { speaker, text: message.transcript }]);
-    };
-
     vapi.on("call-start", onCallStart);
     vapi.on("call-end", onCallEnd);
     vapi.on("error", onError);
-    vapi.on("message", onMessage);
 
     return () => {
       vapi.removeListener("call-start", onCallStart);
       vapi.removeListener("call-end", onCallEnd);
       vapi.removeListener("error", onError);
-      vapi.removeListener("message", onMessage);
 
       void vapi.stop().catch((stopError) => {
         console.error("Failed to stop Vapi call on unmount:", stopError);
@@ -186,12 +158,6 @@ export default function AgentTestPage({
     setCallError(null);
     setIsCallConnecting(true);
     setIsCallActive(true);
-    setConversation([
-      {
-        speaker: "agent",
-        text: "Starting simulation call… (mic permission prompt may appear)",
-      },
-    ]);
 
     const assistantId = process.env.NEXT_PUBLIC_VAPI_ASSISTANT_ID;
 
@@ -283,20 +249,6 @@ export default function AgentTestPage({
     });
   };
 
-  const handleSendMessage = () => {
-    if (!isCallActive || isCallConnecting) return;
-    const text = userMessage.trim();
-    if (!text) return;
-
-    setConversation((prev) => [...prev, { speaker: "user", text }]);
-    setUserMessage("");
-
-    vapiRef.current?.send({
-      type: "add-message",
-      message: { role: "user", content: text },
-    });
-  };
-
   if (!agent) {
     return (
       <DashboardLayout>
@@ -372,34 +324,9 @@ export default function AgentTestPage({
                     </div>
                   </div>
                   {isCallActive && (
-                    <div className="flex items-center gap-2">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => {
-                          const nextMuted = !isMuted;
-                          vapiRef.current?.setMuted(nextMuted);
-                          setIsMuted(nextMuted);
-                        }}
-                      >
-                        {isMuted ? (
-                          <MicOff className="h-4 w-4" />
-                        ) : (
-                          <Mic className="h-4 w-4" />
-                        )}
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => setIsSpeakerOn(!isSpeakerOn)}
-                      >
-                        {isSpeakerOn ? (
-                          <Volume2 className="h-4 w-4" />
-                        ) : (
-                          <VolumeX className="h-4 w-4" />
-                        )}
-                      </Button>
-                    </div>
+                    <Button variant="destructive" size="icon" onClick={handleEndCall}>
+                      <PhoneOff className="h-4 w-4" />
+                    </Button>
                   )}
                 </div>
 
@@ -499,52 +426,22 @@ export default function AgentTestPage({
                       </Button>
                     </div>
                   ) : (
-                    <div className="space-y-4">
-                      {conversation.map((msg, index) => (
-                        <div
-                          key={index}
-                          className={`flex ${
-                            msg.speaker === "user" ? "justify-end" : "justify-start"
-                          }`}
-                        >
-                          <div
-                            className={`max-w-[80%] rounded-2xl px-4 py-2.5 ${
-                              msg.speaker === "user"
-                                ? "rounded-tr-sm bg-primary text-primary-foreground"
-                                : "rounded-tl-sm bg-muted text-foreground"
-                            }`}
-                          >
-                            <p className="text-sm">{msg.text}</p>
-                          </div>
-                        </div>
-                      ))}
+                    <div className="flex h-full flex-col items-center justify-center gap-4 text-center">
+                      <div className="relative flex h-20 w-20 items-center justify-center rounded-full bg-primary/10">
+                        <div className="absolute inset-0 rounded-full bg-primary/10 animate-ping" />
+                        <Mic className="relative h-10 w-10 text-primary animate-pulse" />
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-sm font-medium text-foreground">
+                          {isCallConnecting ? "Connecting…" : "Conversation in progress"}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          Voice only (transcripts hidden for demo)
+                        </p>
+                      </div>
                     </div>
                   )}
                 </div>
-
-                {/* Input Area */}
-                {isCallActive && (
-                  <div className="border-t border-border p-4">
-                    <div className="flex gap-3">
-                      <Input
-                        placeholder="Type your response..."
-                        value={userMessage}
-                        onChange={(e) => setUserMessage(e.target.value)}
-                        onKeyDown={(e) =>
-                          e.key === "Enter" && handleSendMessage()
-                        }
-                        className="flex-1"
-                        disabled={isCallConnecting}
-                      />
-                      <Button onClick={handleSendMessage} disabled={isCallConnecting}>
-                        <MessageSquare className="h-4 w-4" />
-                      </Button>
-                      <Button variant="destructive" onClick={handleEndCall}>
-                        <PhoneOff className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </div>
-                )}
               </CardContent>
             </Card>
           </div>
@@ -635,10 +532,7 @@ export default function AgentTestPage({
                 className="flex-1 bg-transparent"
                 onClick={() => {
                   setCallError(null);
-                  setConversation([]);
-                  setUserMessage("");
                   setIsCallConnecting(false);
-                  setIsMuted(false);
                   void vapiRef.current?.stop().catch((error) => {
                     console.error("Failed to stop Vapi call on reset:", error);
                   });
