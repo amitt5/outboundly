@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, use } from "react";
+import { useState, useEffect, use, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { DashboardLayout } from "@/components/dashboard/dashboard-layout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import Vapi from "@vapi-ai/web";
 import {
   ArrowLeft,
   Phone,
@@ -50,6 +51,7 @@ export default function AgentTestPage({
   const [userMessage, setUserMessage] = useState("");
   const [conversation, setConversation] = useState(sampleConversation);
   const [selectedScenario, setSelectedScenario] = useState("cold-call");
+  const vapiRef = useRef<Vapi | null>(null);
 
   useEffect(() => {
     const foundAgent = agents.find((a) => a.id === id);
@@ -57,10 +59,45 @@ export default function AgentTestPage({
   }, [id]);
 
   const handleStartCall = () => {
-    setIsCallActive(true);
+    const publicKey = process.env.NEXT_PUBLIC_VAPI_API_KEY;
+    const assistantId = process.env.NEXT_PUBLIC_VAPI_ASSISTANT_ID;
+
+    if (!publicKey || !assistantId) {
+      console.error(
+        "Missing Vapi env vars. Set NEXT_PUBLIC_VAPI_API_KEY and NEXT_PUBLIC_VAPI_ASSISTANT_ID."
+      );
+      return;
+    }
+
+    if (!vapiRef.current) {
+      vapiRef.current = new Vapi(publicKey);
+    }
+
     setConversation([
-      { speaker: "agent", text: agent?.greeting || "Hello, this is your AI agent." },
+      {
+        speaker: "agent",
+        text: "Connecting to voice agent… (mic permission prompt may appear)",
+      },
     ]);
+
+    // Step 3: start a real Vapi web call using the shared assistant.
+    // (We'll wire call-start/call-end + transcript events in the next steps.)
+    vapiRef.current.start(assistantId, {
+      variableValues: {
+        respondent_name: "Sarah",
+        language: "en",
+        discussion_guide: [
+          "1) Quick intro: How has your day been so far?",
+          "2) Tell me about the last time you participated in a user interview.",
+          "3) What frustrates you most about qualitative research today?",
+          "4) If you could wave a magic wand, what would you improve?",
+          "5) Any final thoughts you want to add?",
+        ].join("\n"),
+      },
+    });
+
+    // Temporary UI state until we hook real call events.
+    setIsCallActive(true);
   };
 
   const handleEndCall = () => {
