@@ -206,69 +206,51 @@ export default function AgentTestPage({
         .replaceAll("{prospect_name}", prospectFirstName);
 
     if (agent) {
-      const systemPrompt = [
-        "You are a friendly, consultative sales agent for a coworking space.",
-        "Your goal: qualify the prospect, answer their questions, and book a tour/demo.",
-        "",
-        `Business: ${agent.business_name}`,
-        agent.business_website ? `Website: ${agent.business_website}` : "",
-        "",
-        "Prospect details (from form submission):",
-        `- Name: ${prospectName}`,
-        prospect.company ? `- Company: ${prospect.company}` : "",
-        prospect.phone ? `- Phone: ${prospect.phone}` : "",
-        prospect.interestedIn ? `- Interested in: ${prospect.interestedIn}` : "",
-        prospect.questions ? `- Specific questions: ${prospect.questions}` : "",
-        "",
-        agent.primary_objective ? `Objective: ${agent.primary_objective}` : "",
-        agent.personality_traits?.length
-          ? `Personality: ${agent.personality_traits.join(", ")}`
-          : "",
-        agent.key_talking_points
-          ? `Talking points:\n${truncate(agent.key_talking_points, 1800)}`
-          : "",
-        ...uploads
-          .filter((u) => u.text_content && u.text_content.trim())
-          .slice(0, 6)
-          .map((u) => {
-            const label =
-              u.kind === "document"
-                ? "Document"
-                : u.kind === "previous_sales_transcript"
-                  ? "Previous sales transcript"
-                  : "Training transcript";
-            return `${label}${u.title ? ` (${u.title})` : ""}:\n${truncate(u.text_content || "", 1800)}`;
-          }),
-        "",
-        "Guidelines:",
-        "- Start with a warm greeting and confirm what they need.",
-        "- Ask 2–4 clarifying questions (location, frequency, team size, budget, start date).",
-        "- Answer questions directly; offer relevant options and next steps.",
-        "- Close by proposing 2 time slots for a tour/demo and confirm contact details.",
-        "- Keep responses concise and natural.",
-        "- End after booking: say goodbye and end the call.",
-      ]
-        .filter(Boolean)
-        .join("\n");
+      if (!assistantId) {
+        console.error("Missing NEXT_PUBLIC_VAPI_ASSISTANT_ID.");
+        setCallError("Missing assistant id.");
+        setIsCallConnecting(false);
+        setIsCallActive(false);
+        return;
+      }
 
-      const transientAssistant = {
-        name: agent.agent_name,
-        firstMessageMode: "assistant-speaks-first",
-        firstMessage: renderGreeting(agent.opening_greeting || ""),
-        model: {
-          provider: "openai",
-          model: "gpt-4o",
-          messages: [{ role: "system", content: systemPrompt }],
+      // Pick the OpenAI website summary doc if present, otherwise include a small
+      // truncated bundle of other uploads.
+      const websiteSummary = uploads.find(
+        (u) => (u.title || "").toLowerCase().includes("website summary (openai json)")
+      )?.text_content;
+
+      const fallbackFacts = uploads
+        .filter((u) => u.text_content && u.text_content.trim())
+        .slice(0, 4)
+        .map((u) => {
+          const label =
+            u.kind === "document"
+              ? "Document"
+              : u.kind === "previous_sales_transcript"
+                ? "Previous sales transcript"
+                : "Training transcript";
+          return `${label}${u.title ? ` (${u.title})` : ""}:\n${truncate(u.text_content || "", 2500)}`;
+        })
+        .join("\n\n---\n\n");
+
+      const assistantOverrides = {
+        variableValues: {
+          business_name: agent.business_name,
+          business_website: agent.business_website || "",
+          prospect_name: prospectName,
+          prospect_phone: prospect.phone || "",
+          prospect_company: prospect.company || "",
+          interested_in: prospect.interestedIn || "",
+          specific_questions: prospect.questions || "",
+          business_facts_json: websiteSummary || fallbackFacts || "",
         },
-        voice: { provider: "vapi", voiceId: "Elliot" },
-        maxDurationSeconds: Math.max(60, (agent.max_call_duration_minutes || 10) * 60),
-        clientMessages: ["transcript", "tool-calls"],
       };
 
       void vapiRef.current
-        .start(transientAssistant as any)
+        .start(assistantId, assistantOverrides as any)
         .catch((error) => {
-          console.error("Failed to start Vapi demo call:", error);
+          console.error("Failed to start Vapi call:", error);
           setCallError(String(error?.message || "Failed to start call."));
           setIsCallConnecting(false);
           setIsCallActive(false);

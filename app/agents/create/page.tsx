@@ -61,6 +61,9 @@ export default function CreateAgentPage() {
   const [currentStep, setCurrentStep] = useState(1);
   const [isCreating, setIsCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  const [isScraping, setIsScraping] = useState(false);
+  const [scrapeError, setScrapeError] = useState<string | null>(null);
+  const [scrapeInfo, setScrapeInfo] = useState<string | null>(null);
 
   const [formData, setFormData] = useState({
     businessName: "",
@@ -109,6 +112,8 @@ export default function CreateAgentPage() {
   const handleCreate = async () => {
     setIsCreating(true);
     setCreateError(null);
+    setScrapeError(null);
+    setScrapeInfo(null);
     try {
       const supabase = getSupabaseBrowserClient();
 
@@ -175,12 +180,44 @@ export default function CreateAgentPage() {
         if (uploadsError) throw uploadsError;
       }
 
+      // Scrape website and store pages (basic demo). Non-fatal on failure.
+      if (agentPayload.business_website) {
+        setIsScraping(true);
+        try {
+          const res = await fetch(`/api/agents/${created.id}/scrape`, {
+            method: "POST",
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok || !data?.ok) {
+            throw new Error(data?.error || "Website scraping failed.");
+          }
+          if (Array.isArray(data?.scrapedPages)) {
+            console.log("[scrape report] scraped pages:", data.scrapedPages);
+          }
+          if (Array.isArray(data?.discoveredUrls)) {
+            console.log("[scrape report] discovered urls:", data.discoveredUrls);
+          }
+          if (typeof data?.pagesStored === "number") {
+            setScrapeInfo(`Scraped and stored ${data.pagesStored} page(s) from the website.`);
+          }
+          if (data?.summaryStored === false && data?.summaryError) {
+            // show as warning, but allow navigation
+            setScrapeError(String(data.summaryError));
+          }
+        } catch (e: any) {
+          setScrapeError(String(e?.message || "Website scraping failed."));
+        } finally {
+          setIsScraping(false);
+        }
+      }
+
       router.push("/agents");
     } catch (e: any) {
       console.error(e);
       setCreateError(e?.message || "Failed to create agent.");
     } finally {
       setIsCreating(false);
+      setIsScraping(false);
     }
   };
 
@@ -261,6 +298,16 @@ export default function CreateAgentPage() {
             {createError && (
               <div className="mb-6 rounded-lg border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive">
                 {createError}
+              </div>
+            )}
+            {scrapeError && (
+              <div className="mb-6 rounded-lg border border-border bg-muted/30 p-3 text-sm text-muted-foreground">
+                Website scrape warning: {scrapeError}
+              </div>
+            )}
+            {scrapeInfo && (
+              <div className="mb-6 rounded-lg border border-border bg-muted/30 p-3 text-sm text-muted-foreground">
+                {scrapeInfo}
               </div>
             )}
             {/* Step 1: Basic Info */}
@@ -618,7 +665,7 @@ export default function CreateAgentPage() {
               ) : (
                 <Button onClick={handleCreate} disabled={isCreating}>
                   {isCreating ? (
-                    <>Creating Agent...</>
+                    <>{isScraping ? "Creating & scraping website..." : "Creating Agent..."}</>
                   ) : (
                     <>
                       <Check className="mr-2 h-4 w-4" />
