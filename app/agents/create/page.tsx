@@ -29,6 +29,7 @@ import {
   Play,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { createDemoAgentId, upsertDemoAgent } from "@/lib/demo-agent-store";
 
 const steps = [
   { id: 1, title: "Basic Info", icon: User },
@@ -61,14 +62,20 @@ export default function CreateAgentPage() {
   const [isCreating, setIsCreating] = useState(false);
 
   const [formData, setFormData] = useState({
+    businessName: "HarborHub Coworking",
+    website: "https://harborhub.example",
+    documentsNotes: "",
+    previousSalesTranscripts: "",
+    currentRepTrainingTranscripts: "",
     name: "",
     description: "",
     voice: "professional-male",
     speakingPace: [50],
     personality: [] as string[],
-    greeting: "Hi, this is {agent_name} from {company_name}. I hope I caught you at a good time.",
+    greeting:
+      "Hi {prospect_name}, this is {agent_name} from {business_name}. Thanks for reaching out about coworking—do you have 2 minutes so I can help you find the right plan?",
     talkingPoints: "",
-    objective: "",
+    objective: "Qualify the prospect and book a tour/demo for our coworking space.",
     successCriteria: "schedule_demo",
     maxCallDuration: [5],
   });
@@ -100,8 +107,30 @@ export default function CreateAgentPage() {
 
   const handleCreate = async () => {
     setIsCreating(true);
-    // Simulate API call
-    await new Promise((resolve) => setTimeout(resolve, 1500));
+    await new Promise((resolve) => setTimeout(resolve, 600));
+
+    upsertDemoAgent({
+      id: createDemoAgentId(),
+      createdAt: new Date().toISOString(),
+      published: false,
+      business: {
+        businessName: formData.businessName.trim() || "HarborHub Coworking",
+        website: formData.website.trim(),
+        documentsNotes: formData.documentsNotes,
+        previousSalesTranscripts: formData.previousSalesTranscripts,
+        currentRepTrainingTranscripts: formData.currentRepTrainingTranscripts,
+      },
+      name: formData.name.trim() || "Coworking Sales Agent",
+      description:
+        formData.description.trim() ||
+        "Qualifies coworking leads, answers questions, and books tours.",
+      voicePreset: formData.voice,
+      personalityTraits: formData.personality,
+      greeting: formData.greeting,
+      talkingPoints: formData.talkingPoints,
+      objective: formData.objective,
+    });
+
     setIsCreating(false);
     router.push("/agents");
   };
@@ -183,6 +212,29 @@ export default function CreateAgentPage() {
             {/* Step 1: Basic Info */}
             {currentStep === 1 && (
               <div className="space-y-6">
+                <div className="space-y-2">
+                  <Label htmlFor="businessName">Business Name</Label>
+                  <Input
+                    id="businessName"
+                    placeholder="e.g., HarborHub Coworking"
+                    value={formData.businessName}
+                    onChange={(e) => updateFormData("businessName", e.target.value)}
+                  />
+                  <p className="text-sm text-muted-foreground">
+                    This is the coworking space the agent represents in the demo.
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="website">Website</Label>
+                  <Input
+                    id="website"
+                    placeholder="https://..."
+                    value={formData.website}
+                    onChange={(e) => updateFormData("website", e.target.value)}
+                  />
+                </div>
+
                 <div className="space-y-2">
                   <Label htmlFor="name">Agent Name</Label>
                   <Input
@@ -318,6 +370,49 @@ export default function CreateAgentPage() {
             {currentStep === 3 && (
               <div className="space-y-6">
                 <div className="space-y-2">
+                  <Label htmlFor="documentsNotes">
+                    Upload documents / information (notes for demo)
+                  </Label>
+                  <Textarea
+                    id="documentsNotes"
+                    placeholder="Paste or summarize key information about the business, pricing, amenities, location, policies, etc."
+                    value={formData.documentsNotes}
+                    onChange={(e) => updateFormData("documentsNotes", e.target.value)}
+                    rows={4}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="previousSalesTranscripts">
+                    Previous sales call transcripts (reference)
+                  </Label>
+                  <Textarea
+                    id="previousSalesTranscripts"
+                    placeholder="Paste a few transcripts your best reps used to close coworking leads..."
+                    value={formData.previousSalesTranscripts}
+                    onChange={(e) =>
+                      updateFormData("previousSalesTranscripts", e.target.value)
+                    }
+                    rows={6}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="currentRepTrainingTranscripts">
+                    Training transcripts for current rep (reference)
+                  </Label>
+                  <Textarea
+                    id="currentRepTrainingTranscripts"
+                    placeholder="Paste training notes/transcripts you want the agent to follow..."
+                    value={formData.currentRepTrainingTranscripts}
+                    onChange={(e) =>
+                      updateFormData("currentRepTrainingTranscripts", e.target.value)
+                    }
+                    rows={6}
+                  />
+                </div>
+
+                <div className="space-y-2">
                   <Label htmlFor="greeting">Opening Greeting</Label>
                   <Textarea
                     id="greeting"
@@ -327,7 +422,7 @@ export default function CreateAgentPage() {
                     rows={3}
                   />
                   <p className="text-sm text-muted-foreground">
-                    {"Use {agent_name} and {company_name} as placeholders"}
+                    {"Use {agent_name}, {business_name}, {prospect_name} as placeholders"}
                   </p>
                 </div>
 

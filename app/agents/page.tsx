@@ -25,8 +25,14 @@ import {
   Clock,
 } from "lucide-react";
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { agents } from "@/lib/mock-data";
+import {
+  deleteDemoAgent,
+  getDemoAgents,
+  setDemoAgentPublished,
+  type DemoAgentRecord,
+} from "@/lib/demo-agent-store";
 
 const statusColors: Record<string, string> = {
   active: "bg-success/10 text-success border-success/20",
@@ -42,12 +48,36 @@ function formatDuration(seconds: number): string {
 
 export default function AgentsPage() {
   const [searchQuery, setSearchQuery] = useState("");
+  const [demoAgents, setDemoAgents] = useState<DemoAgentRecord[]>([]);
 
-  const filteredAgents = agents.filter(
-    (agent) =>
-      agent.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      agent.description.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  useEffect(() => {
+    setDemoAgents(getDemoAgents());
+  }, []);
+
+  const allAgents = useMemo(() => {
+    const demoAsAgents = demoAgents.map((a) => ({
+      id: a.id,
+      name: a.name,
+      description: a.description,
+      status: a.published ? ("active" as const) : ("inactive" as const),
+      totalCalls: 0,
+      successRate: 0,
+      avgCallDuration: 0,
+      __demo: true as const,
+      __published: a.published,
+    }));
+    return [...demoAsAgents, ...agents.map((a) => ({ ...a, __demo: false as const, __published: a.status === "active" }))];
+  }, [demoAgents]);
+
+  const filteredAgents = allAgents.filter((agent) => {
+    const q = searchQuery.toLowerCase();
+    return (
+      agent.name.toLowerCase().includes(q) ||
+      agent.description.toLowerCase().includes(q)
+    );
+  });
+
+  const refreshDemoAgents = () => setDemoAgents(getDemoAgents());
 
   return (
     <DashboardLayout>
@@ -103,24 +133,39 @@ export default function AgentsPage() {
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
-                          <DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={() => {
+                              if (!agent.__demo) return;
+                              const nextPublished = !(agent as any).__published;
+                              setDemoAgentPublished(agent.id, nextPublished);
+                              refreshDemoAgents();
+                            }}
+                          >
                             {agent.status === "active" ? (
                               <>
                                 <Pause className="mr-2 h-4 w-4" />
-                                Pause Agent
+                                Unpublish
                               </>
                             ) : (
                               <>
                                 <Play className="mr-2 h-4 w-4" />
-                                Activate Agent
+                                Publish
                               </>
                             )}
                           </DropdownMenuItem>
-                          <DropdownMenuItem>
+                          <DropdownMenuItem disabled={!agent.__demo}>
                             <Copy className="mr-2 h-4 w-4" />
                             Duplicate
                           </DropdownMenuItem>
-                          <DropdownMenuItem className="text-destructive">
+                          <DropdownMenuItem
+                            className="text-destructive"
+                            disabled={!agent.__demo}
+                            onClick={() => {
+                              if (!agent.__demo) return;
+                              deleteDemoAgent(agent.id);
+                              refreshDemoAgents();
+                            }}
+                          >
                             <Trash2 className="mr-2 h-4 w-4" />
                             Delete
                           </DropdownMenuItem>
@@ -170,7 +215,11 @@ export default function AgentsPage() {
 
                 <div className="border-t border-border p-4">
                   <Link href={`/agents/${agent.id}/test`} className="block">
-                    <Button variant="outline" className="w-full bg-transparent">
+                    <Button
+                      variant="outline"
+                      className="w-full bg-transparent"
+                      disabled={agent.__demo && agent.status !== "active"}
+                    >
                       Test Agent
                     </Button>
                   </Link>
