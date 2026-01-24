@@ -46,17 +46,80 @@ export default function AgentTestPage({
   const router = useRouter();
   const [agent, setAgent] = useState<Agent | null>(null);
   const [isCallActive, setIsCallActive] = useState(false);
+  const [isCallConnecting, setIsCallConnecting] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [isSpeakerOn, setIsSpeakerOn] = useState(true);
   const [userMessage, setUserMessage] = useState("");
   const [conversation, setConversation] = useState(sampleConversation);
   const [selectedScenario, setSelectedScenario] = useState("cold-call");
+  const [callError, setCallError] = useState<string | null>(null);
   const vapiRef = useRef<Vapi | null>(null);
 
   useEffect(() => {
     const foundAgent = agents.find((a) => a.id === id);
     setAgent(foundAgent || null);
   }, [id]);
+
+  useEffect(() => {
+    const publicKey = process.env.NEXT_PUBLIC_VAPI_API_KEY;
+    if (!publicKey) return;
+
+    const vapi = vapiRef.current ?? new Vapi(publicKey);
+    vapiRef.current = vapi;
+
+    const onCallStart = () => {
+      setCallError(null);
+      setIsCallConnecting(false);
+      setIsCallActive(true);
+    };
+
+    const onCallEnd = () => {
+      setIsCallConnecting(false);
+      setIsCallActive(false);
+      setIsMuted(false);
+    };
+
+    const onError = (error: any) => {
+      console.error("Vapi error:", error);
+      const message =
+        error?.error?.message ||
+        error?.message ||
+        error?.error ||
+        "An error occurred with the voice call.";
+      setCallError(String(message));
+      setIsCallConnecting(false);
+      setIsCallActive(false);
+      setIsMuted(false);
+
+      void vapi.stop().catch((stopError) => {
+        console.error("Failed to stop Vapi call after error:", stopError);
+      });
+    };
+
+    const onMessage = (message: any) => {
+      if (message?.type !== "transcript") return;
+      if (typeof message?.transcript !== "string" || !message.transcript.trim()) return;
+
+      const speaker = message.role === "assistant" ? "agent" : "user";
+      setConversation((prev) => [...prev, { speaker, text: message.transcript }]);
+    };
+
+    vapi.on("call-start", onCallStart);
+    vapi.on("call-end", onCallEnd);
+    vapi.on("error", onError);
+    vapi.on("message", onMessage);
+
+    return () => {
+      vapi.removeListener("call-start", onCallStart);
+      vapi.removeListener("call-end", onCallEnd);
+      vapi.removeListener("error", onError);
+      vapi.removeListener("message", onMessage);
+
+      void vapi.stop().catch((stopError) => {
+        console.error("Failed to stop Vapi call on unmount:", stopError);
+      });
+    };
+  }, []);
 
   const handleStartCall = () => {
     const publicKey = process.env.NEXT_PUBLIC_VAPI_API_KEY;
@@ -73,6 +136,9 @@ export default function AgentTestPage({
       vapiRef.current = new Vapi(publicKey);
     }
 
+    setCallError(null);
+    setIsCallConnecting(true);
+    setIsCallActive(true);
     setConversation([
       {
         speaker: "agent",
@@ -82,47 +148,47 @@ export default function AgentTestPage({
 
     // Step 3: start a real Vapi web call using the shared assistant.
     // (We'll wire call-start/call-end + transcript events in the next steps.)
-    vapiRef.current.start(assistantId, {
-      variableValues: {
-        respondent_name: "Sarah",
-        language: "en",
-        discussion_guide: [
-          "1) Quick intro: How has your day been so far?",
-          "2) Tell me about the last time you participated in a user interview.",
-          "3) What frustrates you most about qualitative research today?",
-          "4) If you could wave a magic wand, what would you improve?",
-          "5) Any final thoughts you want to add?",
-        ].join("\n"),
-      },
-    });
-
-    // Temporary UI state until we hook real call events.
-    setIsCallActive(true);
+    void vapiRef.current
+      .start(assistantId, {
+        variableValues: {
+          respondent_name: "Sarah",
+          language: "en",
+          discussion_guide: [
+            "1) Quick intro: How has your day been so far?",
+            "2) Tell me about the last time you participated in a user interview.",
+            "3) What frustrates you most about qualitative research today?",
+            "4) If you could wave a magic wand, what would you improve?",
+            "5) Any final thoughts you want to add?",
+          ].join("\n"),
+        },
+      })
+      .catch((error) => {
+        console.error("Failed to start Vapi call:", error);
+        setCallError(String(error?.message || "Failed to start call."));
+        setIsCallConnecting(false);
+        setIsCallActive(false);
+      });
   };
 
   const handleEndCall = () => {
-    setIsCallActive(false);
+    setIsCallConnecting(false);
+    void vapiRef.current?.stop().catch((error) => {
+      console.error("Failed to stop Vapi call:", error);
+    });
   };
 
   const handleSendMessage = () => {
-    if (!userMessage.trim()) return;
-    
-    setConversation((prev) => [
-      ...prev,
-      { speaker: "user", text: userMessage },
-    ]);
+    if (!isCallActive || isCallConnecting) return;
+    const text = userMessage.trim();
+    if (!text) return;
+
+    setConversation((prev) => [...prev, { speaker: "user", text }]);
     setUserMessage("");
 
-    // Simulate agent response
-    setTimeout(() => {
-      setConversation((prev) => [
-        ...prev,
-        {
-          speaker: "agent",
-          text: "I understand. Let me tell you more about how we can help your team...",
-        },
-      ]);
-    }, 1500);
+    vapiRef.current?.send({
+      type: "add-message",
+      message: { role: "user", content: text },
+    });
   };
 
   if (!agent) {
@@ -183,16 +249,29 @@ export default function AgentTestPage({
                         isCallActive ? "bg-success animate-pulse" : "bg-muted"
                       }`}
                     />
-                    <span className="font-medium text-foreground">
-                      {isCallActive ? "Call in progress" : "Ready to test"}
-                    </span>
+                    <div className="flex flex-col">
+                      <span className="font-medium text-foreground">
+                        {isCallActive
+                          ? isCallConnecting
+                            ? "Connecting…"
+                            : "Call in progress"
+                          : "Ready to test"}
+                      </span>
+                      {callError && (
+                        <span className="text-xs text-destructive">{callError}</span>
+                      )}
+                    </div>
                   </div>
                   {isCallActive && (
                     <div className="flex items-center gap-2">
                       <Button
                         variant="ghost"
                         size="icon"
-                        onClick={() => setIsMuted(!isMuted)}
+                        onClick={() => {
+                          const nextMuted = !isMuted;
+                          vapiRef.current?.setMuted(nextMuted);
+                          setIsMuted(nextMuted);
+                        }}
                       >
                         {isMuted ? (
                           <MicOff className="h-4 w-4" />
@@ -270,8 +349,9 @@ export default function AgentTestPage({
                           e.key === "Enter" && handleSendMessage()
                         }
                         className="flex-1"
+                        disabled={isCallConnecting}
                       />
-                      <Button onClick={handleSendMessage}>
+                      <Button onClick={handleSendMessage} disabled={isCallConnecting}>
                         <MessageSquare className="h-4 w-4" />
                       </Button>
                       <Button variant="destructive" onClick={handleEndCall}>
@@ -378,7 +458,14 @@ export default function AgentTestPage({
                 variant="outline"
                 className="flex-1 bg-transparent"
                 onClick={() => {
+                  setCallError(null);
                   setConversation([]);
+                  setUserMessage("");
+                  setIsCallConnecting(false);
+                  setIsMuted(false);
+                  void vapiRef.current?.stop().catch((error) => {
+                    console.error("Failed to stop Vapi call on reset:", error);
+                  });
                   setIsCallActive(false);
                 }}
               >
